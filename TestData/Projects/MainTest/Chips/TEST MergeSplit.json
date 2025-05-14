@@ -15,6 +15,17 @@
   },
   "InputPins":[
     {
+      "Name":"IN",
+      "ID":1078719061,
+      "Position":{
+        "x":-14.07407,
+        "y":2.05071
+      },
+      "BitCount":1,
+      "Colour":0,
+      "ValueDisplayMode":0
+    },
+    {
       "Name":"Freeze",
       "ID":-1,
       "Position":{
@@ -666,8 +677,36 @@
       "ConnectedWireIndex":-1,
       "ConnectedWireSegmentIndex":-1,
       "Points":[{"x":0.0,"y":0.0},{"x":0.0,"y":0.0}]
+    },
+    {
+      "SourcePinAddress":{
+        "PinID":0,
+        "PinOwnerID":1078719061
+      },
+      "TargetPinAddress":{
+        "PinID":0,
+        "PinOwnerID":1986390220
+      },
+      "ConnectionType":0,
+      "ConnectedWireIndex":-1,
+      "ConnectedWireSegmentIndex":-1,
+      "Points":[{"x":0.0,"y":0.0},{"x":0.0,"y":0.0}]
+    },
+    {
+      "SourcePinAddress":{
+        "PinID":0,
+        "PinOwnerID":1078719061
+      },
+      "TargetPinAddress":{
+        "PinID":1,
+        "PinOwnerID":1986390220
+      },
+      "ConnectionType":0,
+      "ConnectedWireIndex":-1,
+      "ConnectedWireSegmentIndex":-1,
+      "Points":[{"x":0.0,"y":0.0},{"x":0.0,"y":0.0}]
     }
   ],
   "Displays":[],
-  "FreezePinEnabled": true
+  "FreezePinEnabled": false
 }

@@ -9,67 +9,40 @@ namespace DLS.Simulation
 {
 	public static class Simulator
 	{
-		// Dictionary to track NAND gate input states over time
-		private static readonly Dictionary<SimChip, NandGateTracker> nandGateTrackers = new Dictionary<SimChip, NandGateTracker>();
+		// Dictionary to track chip input states over time
 		private static readonly Dictionary<SimChip, ChipInputTracker> chipInputTrackers = new Dictionary<SimChip, ChipInputTracker>();
-		
-		// Class to track NAND gate input states
-		private class NandGateTracker
-		{
-			public uint LastInput0State;
-			public uint LastInput1State;
-			public int UnchangedTickCount;
-			
-			public NandGateTracker(uint input0State, uint input1State)
-			{
-				LastInput0State = input0State;
-				LastInput1State = input1State;
-				UnchangedTickCount = 0;
-			}
-			
-			public bool CheckAndUpdateInputs(uint input0State, uint input1State)
-			{
-				bool inputsChanged = LastInput0State != input0State || LastInput1State != input1State;
-				
-				if (inputsChanged)
-				{
-					// Inputs changed, reset counter
-					LastInput0State = input0State;
-					LastInput1State = input1State;
-					UnchangedTickCount = 0;
-					return true;
-				}
-				else
-				{
-					// Inputs unchanged, increment counter
-					UnchangedTickCount++;
-					return false;
-				}
-			}
-		}
 
 		private class ChipInputTracker
 		{
-			public uint[] LastInputStates;
+			// Store a history of input states for each pin
+			public List<uint[]> InputStateHistory;
+			public int MaxHistoryLength;
 			public int UnchangedTickCount;
 			
-			public ChipInputTracker(SimPin[] inputPins)
+			public ChipInputTracker(SimPin[] inputPins, int historyLength = 10)
 			{
-				LastInputStates = new uint[inputPins.Length];
+				MaxHistoryLength = historyLength;
+				InputStateHistory = new List<uint[]>(MaxHistoryLength);
+				
+				// Initialize with current state
+				uint[] initialState = new uint[inputPins.Length];
 				for (int i = 0; i < inputPins.Length; i++)
 				{
-					LastInputStates[i] = inputPins[i].State;
+					initialState[i] = inputPins[i].State;
 				}
+				InputStateHistory.Add(initialState);
 				UnchangedTickCount = 0;
 			}
 			
 			public bool CheckAndUpdateInputs(SimPin[] inputPins)
 			{
 				bool inputsChanged = false;
+				uint[] currentState = InputStateHistory[0]; // Most recent state
 				
+				// Check if current inputs differ from most recent recorded state
 				for (int i = 0; i < inputPins.Length; i++)
 				{
-					if (i < LastInputStates.Length && LastInputStates[i] != inputPins[i].State)
+					if (i < currentState.Length && currentState[i] != inputPins[i].State)
 					{
 						inputsChanged = true;
 						break;
@@ -78,11 +51,22 @@ namespace DLS.Simulation
 				
 				if (inputsChanged)
 				{
-					// Inputs changed, update states and reset counter
-					for (int i = 0; i < inputPins.Length && i < LastInputStates.Length; i++)
+					// Inputs changed, add new state to history
+					uint[] newState = new uint[inputPins.Length];
+					for (int i = 0; i < inputPins.Length; i++)
 					{
-						LastInputStates[i] = inputPins[i].State;
+						newState[i] = inputPins[i].State;
 					}
+					
+					// Add to front of history
+					InputStateHistory.Insert(0, newState);
+					
+					// Trim history if it exceeds maximum length
+					if (InputStateHistory.Count > MaxHistoryLength)
+					{
+						InputStateHistory.RemoveAt(InputStateHistory.Count - 1);
+					}
+					
 					UnchangedTickCount = 0;
 					return true;
 				}
@@ -92,6 +76,17 @@ namespace DLS.Simulation
 					UnchangedTickCount++;
 					return false;
 				}
+			}
+			
+			// Get input state from n ticks ago (0 = current, 1 = previous, etc.)
+			public uint[] GetHistoricalState(int ticksAgo)
+			{
+				if (ticksAgo < InputStateHistory.Count)
+				{
+					return InputStateHistory[ticksAgo];
+				}
+				// If requesting history beyond what we have, return oldest available
+				return InputStateHistory[InputStateHistory.Count - 1];
 			}
 		}
 		
@@ -143,7 +138,7 @@ namespace DLS.Simulation
 
 			pcg_rngState = (uint)rng.Next();
 			canDynamicReorderThisFrame = simulationFrame % 100 == 0;
-			simulationFrame++;
+			simulationFrame++; //
 
 			// Step 1) Get player-controlled input states and copy values to the sim
 			foreach (DevPinInstance input in inputPins)
@@ -182,37 +177,46 @@ namespace DLS.Simulation
 			// Check if the chip is frozen (freeze pin is high)
 			bool isChipFrozen = FreezeChip.IsChipFrozen(chip);
 
-			// Check if auto freeze is enabled
+			// Check if auto-freeze is enabled
 			bool autoFreezeEnabled = Project.ActiveProject != null && 
 									 Project.ActiveProject.description.Prefs_FreezeAuto;
 			
-			// Checky checky for auto freeze if not already frozen
+			// Check for auto-freeze if not already frozen
 			bool skipDueToAutoFreeze = false;
 			if (autoFreezeEnabled && !isChipFrozen && chip.InputPins.Length > 0)
 			{
-				int freezeAutoTickRate = Project.ActiveProject.description.Prefs_FreezeAutoTickRate;
+				// Don't auto-freeze chips that need to update every frame
+				bool chipRequiresConstantUpdates = 
+					chip.ChipType == ChipType.Clock || 
+					chip.ChipType == ChipType.Key ||
+					ContainsChipThatRequiresConstantUpdates(chip);
 				
-				// Get or create tracker for this chip
-				if (!chipInputTrackers.TryGetValue(chip, out ChipInputTracker tracker))
+				if (!chipRequiresConstantUpdates)
 				{
-					tracker = new ChipInputTracker(chip.InputPins);
-					chipInputTrackers[chip] = tracker;
-				}
-				
-				// Check if inputs have changed
-				bool inputsChanged = tracker.CheckAndUpdateInputs(chip.InputPins);
-				
-				// Skip processing if inputs haven't changed for the specified number of ticks
-				if (!inputsChanged && tracker.UnchangedTickCount >= freezeAutoTickRate)
-				{
-					skipDueToAutoFreeze = true;
+					int freezeAutoTickRate = Project.ActiveProject.description.Prefs_FreezeAutoTickRate;
+					
+					// Get or create tracker for this chip
+					if (!chipInputTrackers.TryGetValue(chip, out ChipInputTracker tracker))
+					{
+						tracker = new ChipInputTracker(chip.InputPins);
+						chipInputTrackers[chip] = tracker;
+					}
+					
+					// Check if inputs have changed
+					bool inputsChanged = tracker.CheckAndUpdateInputs(chip.InputPins);
+					
+					// Skip processing if inputs haven't changed for the specified number of ticks
+					if (!inputsChanged && tracker.UnchangedTickCount >= freezeAutoTickRate)
+					{
+						skipDueToAutoFreeze = true;
+					}
 				}
 			}
 
-			// Skip processing if frozen or auto frozen
+			// Skip processing if frozen or auto-frozen
 			if (isChipFrozen || skipDueToAutoFreeze)
 			{
-				// uhhh yeah idk, forgoty
+				// Still need to propagate outputs even if frozen
 				for (int i = chip.SubChips.Length - 1; i >= 0; i--)
 				{
 					chip.SubChips[i].Sim_PropagateOutputs();
@@ -772,7 +776,6 @@ namespace DLS.Simulation
 		{
 			simulationFrame = 0;
 			modificationQueue?.Clear();
-			nandGateTrackers.Clear();  // Clear NAND gate trackers on reset
 		}
 
 		struct SimModifyCommand
@@ -799,6 +802,25 @@ namespace DLS.Simulation
 			public bool pinIsInputPin;
 			public int removePinID;
 			public int removeSubChipID;
+		}
+
+		// Check if a chip contains any subchips that require constant updates
+		static bool ContainsChipThatRequiresConstantUpdates(SimChip chip)
+		{
+			// For custom chips, check all subchips recursively
+			if (chip.ChipType == ChipType.Custom)
+			{
+				foreach (SimChip subChip in chip.SubChips)
+				{
+					if (subChip.ChipType == ChipType.Clock || 
+						subChip.ChipType == ChipType.Key ||
+						ContainsChipThatRequiresConstantUpdates(subChip))
+					{
+						return true;
+					}
+				}
+			}
+			return false;
 		}
 	}
 }
